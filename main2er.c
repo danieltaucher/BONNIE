@@ -56,7 +56,6 @@ volatile uint8_t adcIndex = 0;
 volatile uint32_t filterMedianOverAllChannels = 0;
 
 volatile uint8_t gewicht;
-volatile uint8_t altes_gewicht;
 
 
 typedef struct
@@ -176,7 +175,7 @@ void ADC_Init(void)
     LL_GPIO_Init(GPIOC, &gpio);
 
     LL_ADC_SetCommonClock(__LL_ADC_COMMON_INSTANCE(ADC2),
-                          LL_ADC_CLOCK_SYNC_PCLK_DIV2);     //Takt für ADC wird aus Peripherietakt genommen -> 32Mhz/2 = 16Mhz
+                          LL_ADC_CLOCK_SYNC_PCLK_DIV4);     //Takt für ADC wird aus Peripherietakt genommen -> 32Mhz/4 = 8Mhz
 
     LL_ADC_REG_SetSequencerLength(ADC2, LL_ADC_REG_SEQ_SCAN_ENABLE_4RANKS);     //festlegen das eine Messreihe aus 4 Wandlungen bestehet 
     LL_ADC_REG_SetSequencerRanks(ADC2, LL_ADC_REG_RANK_1, LL_ADC_CHANNEL_9);    //hier bestimmen welcher Kanal welchen Rank bekommt dann wird sequentiell abgearbeitet
@@ -184,15 +183,15 @@ void ADC_Init(void)
     LL_ADC_REG_SetSequencerRanks(ADC2, LL_ADC_REG_RANK_3, LL_ADC_CHANNEL_11);
     LL_ADC_REG_SetSequencerRanks(ADC2, LL_ADC_REG_RANK_4, LL_ADC_CHANNEL_5);
 	
-		LL_ADC_REG_SetContinuousMode(ADC2, LL_ADC_REG_CONV_CONTINUOUS);
+		LL_ADC_REG_SetContinuousMode(ADC2, LL_ADC_REG_CONV_SINGLE);
 
-    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_9, LL_ADC_SAMPLINGTIME_181CYCLES_5);  //Abtastzeit festlegen hier 61,5 Taktzyklen des ADC für einen Messwert ; 61,5/16Mhz=3,84µs
-    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_8, LL_ADC_SAMPLINGTIME_181CYCLES_5);  //61,5 Zyklen weil dadurch der Kondensator sicher aufgeladen ist
-    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_11, LL_ADC_SAMPLINGTIME_181CYCLES_5);
-    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_5, LL_ADC_SAMPLINGTIME_181CYCLES_5);
+    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_9, LL_ADC_SAMPLINGTIME_601CYCLES_5);  //Abtastzeit festlegen hier 61,5 Taktzyklen des ADC für einen Messwert ; 61,5/16Mhz=3,84µs
+    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_8, LL_ADC_SAMPLINGTIME_601CYCLES_5);  //61,5 Zyklen weil dadurch der Kondensator sicher aufgeladen ist
+    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_11, LL_ADC_SAMPLINGTIME_601CYCLES_5);
+    LL_ADC_SetChannelSamplingTime(ADC2, LL_ADC_CHANNEL_5, LL_ADC_SAMPLINGTIME_601CYCLES_5);
 
     LL_ADC_EnableInternalRegulator(ADC2);       //internen Spannungsregulator für eine stabile Versorgungspannung 
-    LL_mDelay(1);
+    LL_mDelay(1000);
 
     LL_ADC_StartCalibration(ADC2, LL_ADC_SINGLE_ENDED);     //interne Spannungsunebenheiten kalibrieren / Misst Spannung gegenüber Masse
     while (LL_ADC_IsCalibrationOnGoing(ADC2));              //braucht dafür zeit ist auch so im Reference Manual vorgegeben
@@ -556,6 +555,16 @@ void ADC1_2_IRQHandler(void)
 		static int64_t channel3 = 0;
 		static int64_t channel4 = 0;
 	
+		if (LL_ADC_IsActiveFlag_EOC(ADC2))      //Wenn eine Wandlung zu Ende ist 
+    {
+        adcWerte[adcIndex] = LL_ADC_REG_ReadConversionData12(ADC2);     //12 Bit Ergebnis der Wandlung speichern
+        adcIndex++;
+
+        if (adcIndex == 4)
+        {
+            adcIndex = 0;
+        }
+    }
 		
 	
 		if(LL_ADC_IsActiveFlag_EOS(ADC2))
@@ -564,50 +573,38 @@ void ADC1_2_IRQHandler(void)
 			channel2 += adcWerte[1];
 			channel3 += adcWerte[2];
 			channel4 += adcWerte[3];
-				
 			
-			if(cnt == 65000)
+			
+			if(cnt >= 27000)
 			{
-				filter_adcWerte[0] = channel1 / 65000;
-				filter_adcWerte[1] = channel2 / 65000;
-				filter_adcWerte[2] = channel3 / 65000;
-				filter_adcWerte[3] = channel4 / 65000;
+				filter_adcWerte[0] = channel1 / 27000;
+				filter_adcWerte[1] = channel2 / 27000;
+				filter_adcWerte[2] = channel3 / 27000;
+				filter_adcWerte[3] = channel4 / 27000;
 				
 				channel1 = channel2 = channel3 = channel4 = 0;
 				cnt = 0;
 				
-				filterMedianOverAllChannels = (filter_adcWerte[0] + filter_adcWerte[0] + filter_adcWerte[0] + filter_adcWerte[0]) / 4; // this caclulation is for kg calculations
+				filterMedianOverAllChannels = (filter_adcWerte[0] + filter_adcWerte[1] + filter_adcWerte[2] + filter_adcWerte[3]) / 4; // this caclulation is for kg calculations
 				
 				
-				if((filterMedianOverAllChannels - 944) < 0) {
+				if((filterMedianOverAllChannels - 236) < 0) {
 					gewicht = 0;
 				}
 				else {
-				gewicht = (filterMedianOverAllChannels - 944) * 0.506;
-					if(gewicht != altes_gewicht) {
+				gewicht = (filterMedianOverAllChannels - 236) * 2.102;
 				LL_USART_TransmitData8(USART2, gewicht);
-				altes_gewicht = gewicht;
 			}
 				}
 					
+				
+				LL_ADC_ClearFlag_EOS(ADC2);
+				LL_ADC_REG_StartConversion(ADC2);
+				adcIndex = 0;
 			}
 			
 			cnt++;
-		}
-	
-    if (LL_ADC_IsActiveFlag_EOC(ADC2))      //Wenn eine Wandlung zu Ende ist 
-    {
-        adcWerte[adcIndex] = LL_ADC_REG_ReadConversionData12(ADC2);     //12 Bit Ergebnis der Wandlung speichern
-        adcIndex++;
-				
-				
-				
-
-        if (adcIndex == 4)
-        {
-            adcIndex = 0;
-        }
-    }
+		
 }
 
 
@@ -716,3 +713,4 @@ void assert_failed(uint8_t *file, uint32_t line)
 /**
   * @}
   */
+
